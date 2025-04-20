@@ -71,6 +71,8 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--rdp-port PORT]
                        [--web-port PORT]
                        [--allow-ping]
+                       # Thêm mô tả cho tùy chọn --cmd
+                       [--cmd "COMMAND"] (For Windows install: Insert COMMAND into line 2 of windows-resize.bat)
 
 Manual: https://github.com/bin456789/reinstall
 
@@ -2746,14 +2748,16 @@ build_finalos_cmdline() {
 }
 
 build_extra_cmdline() {
-    # 使用 extra_xxx=yyy 而不是 extra.xxx=yyy
-    # 因为 debian installer /lib/debian-installer-startup.d/S02module-params
-    # 会将 extra.xxx=yyy 写入新系统的 /etc/modprobe.d/local.conf
+    # Sử dụng extra_xxx=yyy thay vì extra.xxx=yyy
+    # Vì debian installer /lib/debian-installer-startup.d/S02module-params
+    # sẽ ghi extra.xxx=yyy vào /etc/modprobe.d/local.conf của hệ thống mới
     # https://answers.launchpad.net/ubuntu/+question/249456
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
+
+    # Thêm cmd_to_insert vào danh sách các khóa cần xử lý
     for key in confhome hold force force_cn force_old_windows_setup cloud_image main_disk \
         elts deb_mirror \
-        ssh_port rdp_port web_port allow_ping; do
+        ssh_port rdp_port web_port allow_ping cmd_to_insert; do
         value=${!key}
         if [ -n "$value" ]; then
             is_need_quote "$value" &&
@@ -2762,14 +2766,14 @@ build_extra_cmdline() {
         fi
     done
 
-    # 指定最终安装系统的 mirrorlist，链接有&，在grub中是特殊字符，所以要加引号
+    # Chỉ định mirrorlist cho hệ thống cài đặt cuối cùng, link có &, là ký tự đặc biệt trong grub, nên cần thêm dấu ngoặc kép
     if [ -n "$finalos_mirrorlist" ]; then
         extra_cmdline+=" extra_mirrorlist='$finalos_mirrorlist'"
     elif [ -n "$nextos_mirrorlist" ]; then
         extra_cmdline+=" extra_mirrorlist='$nextos_mirrorlist'"
     fi
 
-    # cloudcone 特殊处理
+    # Xử lý đặc biệt cho cloudcone
     if is_grub_dir_linked; then
         finalos_cmdline+=" extra_link_grub_dir=1"
     fi
@@ -3529,6 +3533,7 @@ else
 fi
 
 long_opts=
+# Thêm 'cmd:' vào danh sách tùy chọn dài
 for o in ci installer debug minimal allow-ping force-cn \
     add-driver-dir: \
     hold: sleep: \
@@ -3544,12 +3549,13 @@ for o in ci installer debug minimal allow-ping force-cn \
     allow-ping: \
     commit: \
     force: \
-    force-old-windows-setup:; do
+    force-old-windows-setup: \
+    cmd:; do # Đã thêm cmd:
     [ -n "$long_opts" ] && long_opts+=,
     long_opts+=$o
 done
 
-# 整理参数
+# 整理参数 (Sắp xếp tham số)
 if ! opts=$(getopt -n $0 -o "" --long "$long_opts" -- "$@"); then
     exit
 fi
@@ -3585,7 +3591,7 @@ while true; do
         shift
         ;;
     --force-cn)
-        # 仅为了方便测试
+        # 仅为了方便测试 (Chỉ để kiểm tra thuận tiện)
         force_cn=1
         shift
         ;;
@@ -3624,22 +3630,22 @@ while true; do
         shift 2
         ;;
     --add-driver-dir)
-        # 指定 dir 而不是指定 inf
-        # 防止用户将 inf 放在 / 而复制整个 /
+        # Chỉ định dir thay vì chỉ định inf
+        # Ngăn người dùng đặt inf vào / và sao chép toàn bộ /
 
-        # 路径转换
+        # Chuyển đổi đường dẫn
         if is_in_windows; then
-            # 输入的路径是 / 开头也没问题
+            # Đường dẫn nhập vào bắt đầu bằng / cũng không sao
             dir="$(cygpath -u "$2")"
         else
             dir=$2
         fi
 
-        # 防止重复添加
+        # Ngăn chặn thêm trùng lặp
         if ! grep -Fqx "$dir" <<<"$custom_driver_dirs"; then
             # shellcheck disable=SC2010
             { [ -d "$dir" ] && ls "$dir" | grep -Eiq '\.inf$'; } || error_and_exit "Invalid Driver Directory: $2"
-            # 一行一个驱动文件夹
+            # Mỗi dòng một thư mục driver
             custom_driver_dirs+="$dir
 "
         fi
@@ -3667,6 +3673,12 @@ while true; do
         ;;
     --lang)
         lang=$(echo "$2" | to_lower)
+        shift 2
+        ;;
+    # Thêm trường hợp xử lý cho --cmd
+    --cmd)
+        [ -n "$2" ] || error_and_exit "Need value for $1"
+        cmd_to_insert=$2
         shift 2
         ;;
     --)
