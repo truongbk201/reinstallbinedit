@@ -2521,30 +2521,13 @@ modify_windows() {
     download $confhome/windows-resize.bat $os_dir/windows-resize.bat
     bats="$bats windows-resize.bat"
 
-    # === PHẦN THÊM VÀO ===
-    # Kiểm tra xem biến extra_cmd_to_insert (được đọc từ /proc/cmdline) có giá trị không
-    # Biến này chứa lệnh được truyền từ tùy chọn --cmd của reinstall.sh
-    if [ -n "$extra_cmd_to_insert" ]; then
-        info "Injecting custom command into windows-resize.bat"
-        local resize_bat_path="$os_dir/windows-resize.bat"
-        local temp_bat_path=$(mktemp)
-        # Sử dụng awk để chèn lệnh vào dòng thứ 2, giữ nguyên các dòng khác
-        # Thêm \r vào cuối lệnh để đảm bảo đúng định dạng dòng của Windows (CRLF)
-        awk -v cmd="$extra_cmd_to_insert" 'NR==2{print cmd "\r"}1' "$resize_bat_path" > "$temp_bat_path"
-        # Kiểm tra xem awk có thành công không trước khi thay thế tệp gốc
-        if [ $? -eq 0 ] && [ -s "$temp_bat_path" ]; then
-             mv "$temp_bat_path" "$resize_bat_path"
-             echo "Custom command injected."
-        else
-             warn "Failed to inject custom command using awk. Keeping original windows-resize.bat."
-             rm -f "$temp_bat_path" # Xóa tệp tạm nếu thất bại
-        fi
-        # Hiển thị vài dòng đầu để kiểm tra
-        echo "First few lines of modified windows-resize.bat:"
-        head -n 5 "$resize_bat_path" | cat -A
-        echo "---"
-    fi
-    # === KẾT THÚC PHẦN THÊM VÀO ===
+    # === PHẦN XÓA BỎ ===
+    # Không chèn lệnh tùy chỉnh vào windows-resize.bat nữa
+    # if [ -n "$extra_cmd_to_insert" ]; then
+    #    info "Injecting custom command into windows-resize.bat"
+    #    ... (đoạn mã awk đã bị xóa) ...
+    # fi
+    # === KẾT THÚC PHẦN XÓA BỎ ===
 
     # 4. 网络设置 (Network settings)
     for ethx in $(get_eths); do
@@ -2553,7 +2536,7 @@ modify_windows() {
     done
 
     if $use_gpo; then
-        # 使用组策略 (Use Group Policy)
+        # Sử dụng组策略 (Use Group Policy)
         gpt_ini=$os_dir/Windows/System32/GroupPolicy/gpt.ini
         scripts_ini=$os_dir/Windows/System32/GroupPolicy/Machine/Scripts/scripts.ini
         mkdir -p "$(dirname $scripts_ini)"
@@ -2603,12 +2586,21 @@ EOF
         # windows-del-gpo.bat
         download $confhome/windows-del-gpo.bat $os_dir/windows-del-gpo.bat
     else
-        # 使用 SetupComplete (Use SetupComplete)
+        # Sử dụng SetupComplete (Use SetupComplete)
         setup_complete=$os_dir/Windows/Setup/Scripts/SetupComplete.cmd
         mkdir -p "$(dirname $setup_complete)"
 
         # Tạo tệp mới hoặc xóa nội dung cũ để tránh trùng lặp
         true > "$setup_complete"
+
+        # === PHẦN THÊM VÀO ===
+        # Kiểm tra và chèn lệnh tùy chỉnh từ --cmd vào đầu SetupComplete.cmd
+        if [ -n "$extra_cmd_to_insert" ]; then
+            info "Adding custom command to SetupComplete.cmd"
+            echo "$extra_cmd_to_insert" >> "$setup_complete"
+            echo >> "$setup_complete" # Thêm một dòng trống cho dễ nhìn
+        fi
+        # === KẾT THÚC PHẦN THÊM VÀO ===
 
         # Thêm các lệnh gọi .bat vào SetupComplete.cmd
         # call 防止子 bat 删除自身后中断主脚本 (call prevents sub bat from interrupting main script after deleting itself)
