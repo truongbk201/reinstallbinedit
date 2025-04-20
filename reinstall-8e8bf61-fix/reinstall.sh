@@ -3,9 +3,9 @@
 # shellcheck disable=SC2086
 
 set -eE
-confhome=https://raw.githubusercontent.com/bin456789/reinstall/main
+confhome=https://raw.githubusercontent.com/truongbk201/reinstallbinedit/refs/heads/main/reinstall-8e8bf61-fix
 confhome_cn=https://gitlab.com/bin456789/reinstall/-/raw/main
-# confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/bin456789/reinstall/main
+# confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/truongbk201/reinstallbinedit/refs/heads/main/reinstall-8e8bf61-fix
 
 # 默认密码
 DEFAULT_PASSWORD=123@@@
