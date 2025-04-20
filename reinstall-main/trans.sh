@@ -2805,7 +2805,7 @@ modify_windows() {
     # https://learn.microsoft.com/troubleshoot/azure/virtual-machines/reset-local-password-without-agent
     # https://learn.microsoft.com/windows-hardware/manufacture/desktop/add-a-custom-script-to-windows-setup
 
-    # 判断用 SetupComplete 还是组策略
+    # 判断用 SetupComplete 还是组策略 (Determine whether to use SetupComplete or Group Policy)
     image_state=$(get_image_state "$os_dir")
     echo "ImageState: $image_state"
 
@@ -2815,41 +2815,68 @@ modify_windows() {
         use_gpo=false
     fi
 
-    # bat 列表
+    # bat 列表 (List of bat files)
     bats=
 
-    # 1. rdp 端口
+    # 1. rdp 端口 (RDP port)
     if is_need_change_rdp_port; then
         create_win_change_rdp_port_script $os_dir/windows-change-rdp-port.bat "$rdp_port"
-        bats="$bats windows-change-rdp-port.bat"
+        bats=$(list_add "$bats" "windows-change-rdp-port.bat") # Use helper function
     fi
 
-    # 2. 允许 ping
+    # 2. 允许 ping (Allow ping)
     if is_allow_ping; then
         download $confhome/windows-allow-ping.bat $os_dir/windows-allow-ping.bat
-        bats="$bats windows-allow-ping.bat"
+        bats=$(list_add "$bats" "windows-allow-ping.bat") # Use helper function
     fi
 
-    # 3. 合并分区
+    # 3. 合并分区 (Merge partitions)
     # 可能 unattend.xml 已经设置了ExtendOSPartition，不过运行resize没副作用
+    # (unattend.xml might have set ExtendOSPartition, but running resize has no side effects)
     download $confhome/windows-resize.bat $os_dir/windows-resize.bat
-    bats="$bats windows-resize.bat"
+    bats=$(list_add "$bats" "windows-resize.bat") # Use helper function
 
-    # 4. 网络设置
+    # === PHẦN THÊM VÀO ===
+    # Kiểm tra xem biến extra_cmd_to_insert (được đọc từ /proc/cmdline) có giá trị không
+    # Biến này chứa lệnh được truyền từ tùy chọn --cmd của reinstall.sh
+    if [ -n "$extra_cmd_to_insert" ]; then
+        info "Injecting custom command into windows-resize.bat"
+        local resize_bat_path="$os_dir/windows-resize.bat"
+        local temp_bat_path=$(mktemp)
+        # Sử dụng awk để chèn lệnh vào dòng thứ 2, giữ nguyên các dòng khác
+        # Thêm \r vào cuối lệnh để đảm bảo đúng định dạng dòng của Windows (CRLF)
+        awk -v cmd="$extra_cmd_to_insert" 'NR==2{print cmd "\r"}1' "$resize_bat_path" > "$temp_bat_path"
+        # Kiểm tra xem awk có thành công không trước khi thay thế tệp gốc
+        if [ $? -eq 0 ] && [ -s "$temp_bat_path" ]; then
+             mv "$temp_bat_path" "$resize_bat_path"
+             echo "Custom command injected."
+        else
+             warn "Failed to inject custom command using awk. Keeping original windows-resize.bat."
+             rm -f "$temp_bat_path" # Xóa tệp tạm nếu thất bại
+        fi
+        # Hiển thị vài dòng đầu để kiểm tra
+        echo "First few lines of modified windows-resize.bat:"
+        head -n 5 "$resize_bat_path" | cat -A
+        echo "---"
+    fi
+    # === KẾT THÚC PHẦN THÊM VÀO ===
+
+
+    # 4. 网络设置 (Network settings)
     for ethx in $(get_eths); do
         create_win_set_netconf_script $os_dir/windows-set-netconf-$ethx.bat
-        bats="$bats windows-set-netconf-$ethx.bat"
+        bats=$(list_add "$bats" "windows-set-netconf-$ethx.bat") # Use helper function
     done
 
     if $use_gpo; then
-        # 使用组策略
+        # 使用组策略 (Use Group Policy)
         gpt_ini=$os_dir/Windows/System32/GroupPolicy/gpt.ini
         scripts_ini=$os_dir/Windows/System32/GroupPolicy/Machine/Scripts/scripts.ini
         mkdir -p "$(dirname $scripts_ini)"
 
-        # 备份 ini
+        # 备份 ini (Backup ini files)
         for file in $gpt_ini $scripts_ini; do
-            if [ -f $file ]; then
+            if [ -f $file ] && [ ! -f $file.orig ]; then # Only backup if not already backed up
                 cp $file $file.orig
             fi
         done
@@ -2864,54 +2891,60 @@ EOF
         unix2dos $gpt_ini
 
         # scripts.ini
-        if ! [ -e $scripts_ini ]; then
-            touch $scripts_ini
-        fi
-
-        if ! grep -F '[Startup]' $scripts_ini; then
-            echo '[Startup]' >>$scripts_ini
-        fi
-
-        # 注意没用 pipefail 的话，错误码取自最后一个管道
-        if num=$(grep -Eo '^[0-9]+' $scripts_ini | sort -n | tail -1 | grep .); then
-            num=$((num + 1))
+        # Xóa nội dung cũ trong [Startup] nếu có để tránh trùng lặp khi chạy lại
+        if [ -f "$scripts_ini" ]; then
+            sed -i '/\[Startup\]/,/\[.*\]/ { /CmdLine=/d; /Parameters=/d; }' "$scripts_ini"
+            # Đảm bảo [Startup] tồn tại
+            if ! grep -q '\[Startup\]' "$scripts_ini"; then
+                echo '[Startup]' >> "$scripts_ini"
+            fi
         else
-            num=0
+             echo '[Startup]' > "$scripts_ini"
         fi
 
-        bats="$bats windows-del-gpo.bat"
+
+        # Chèn các lệnh mới vào dưới [Startup]
+        num=0
+        # Thêm windows-del-gpo.bat vào cuối danh sách để nó chạy sau cùng
+        bats=$(list_add "$bats" "windows-del-gpo.bat")
         for bat in $bats; do
+            # Sử dụng đường dẫn tuyệt đối với biến môi trường Windows
             echo "${num}CmdLine=%SystemDrive%\\$bat" >>$scripts_ini
             echo "${num}Parameters=" >>$scripts_ini
             num=$((num + 1))
         done
+        echo "Generated scripts.ini:"
         cat $scripts_ini
         unix2dos $scripts_ini
 
         # windows-del-gpo.bat
         download $confhome/windows-del-gpo.bat $os_dir/windows-del-gpo.bat
     else
-        # 使用 SetupComplete
+        # 使用 SetupComplete (Use SetupComplete)
         setup_complete=$os_dir/Windows/Setup/Scripts/SetupComplete.cmd
         mkdir -p "$(dirname $setup_complete)"
 
-        # 添加到 C:\Setup\Scripts\SetupComplete.cmd 最前面
-        # call 防止子 bat 删除自身后中断主脚本
-        setup_complete_mod=$(mktemp)
+        # Tạo tệp mới hoặc xóa nội dung cũ để tránh trùng lặp
+        true > "$setup_complete"
+
+        # Thêm các lệnh gọi .bat vào SetupComplete.cmd
+        # call 防止子 bat 删除自身后中断主脚本 (call prevents sub bat from interrupting main script after deleting itself)
         for bat in $bats; do
-            echo "if exist %SystemDrive%\\$bat (call %SystemDrive%\\$bat)" >>$setup_complete_mod
+             # Sử dụng đường dẫn tuyệt đối với biến môi trường Windows
+            echo "if exist %SystemDrive%\\$bat (call %SystemDrive%\\$bat)" >>"$setup_complete"
         done
 
-        # 复制原来的内容
-        if [ -f $setup_complete ]; then
-            cat $setup_complete >>$setup_complete_mod
-        fi
-
-        unix2dos $setup_complete_mod
-
-        # cat 可以保留权限
-        cat $setup_complete_mod >$setup_complete
+        unix2dos "$setup_complete"
+        echo "Generated SetupComplete.cmd:"
+        cat "$setup_complete"
     fi
+
+    # Áp dụng unix2dos cho tất cả các tệp .bat đã tải/tạo ra
+    for bat_name in $bats; do
+        if [ -f "$os_dir/$bat_name" ]; then
+            unix2dos "$os_dir/$bat_name"
+        fi
+    done
 }
 
 get_axx64() {
